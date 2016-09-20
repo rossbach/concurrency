@@ -1,0 +1,8 @@
+all: kmeans-pthreads
+
+kmeans-pthreads: kmeans-pthreads.c info.h
+	gcc kmeans-pthreads.c -lm -o kmeans-forkjoin 
+
+clean:
+	rm kmeans-pthreads
+

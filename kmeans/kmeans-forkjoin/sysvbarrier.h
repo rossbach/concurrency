@@ -97,5 +97,14 @@ static void barrier_wait(BARRIER barrier, int procid, int nprocs) {
   if(procid == 0)
     barrier_reset(barrier, nprocs);
 }
+
+static void barrier_wait_ex(BARRIER barrierX, BARRIER barrierY, int procid, int nprocs) {
+  if(procid == 0) {
+    barrier_reset(barrierY, nprocs);
+  }
+  barrier_complete(barrierX, procid);
+  _barrier_wait(barrierX, procid, nprocs);
+}
+
 #endif
 

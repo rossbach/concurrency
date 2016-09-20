@@ -10,12 +10,14 @@
 #include <signal.h>
 #include <sched.h>
 #include <sys/mman.h>
+#include <pthread.h>
+#include <sys/syscall.h>
 #include "info.h"
-#include "sysvbarrier.h"
 
 #define DIMS 16
 #define MAXWORKERS 32
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
+#define gettid() syscall(__NR_gettid)
 
 typedef struct {    /* A 2D vector */
   int cluster;
@@ -31,21 +33,24 @@ POINT*  _centers;          /* Global array of centers */
 POINT*  _ncenters;         /* Global temporary centers */
 POINT*  _points;           /* Global array of 2D data points */
 int     _numpoints;        /* Number of 2D data points */
-BARRIER _barrierX;         /* for synchronization of procs across iterations */
-BARRIER _barrierY;         /* for synchronization of procs across iterations */
-LOCK    _lock;             /* sync access to sums arrays at aggregation */
+pthread_barrier_t _barrierX;   /* for synchronization of procs across iterations */
+pthread_barrier_t _barrierY;   /* for synchronization of procs across iterations */
+pthread_mutex_t   _lock;       /* sync access to sums arrays at aggregation */
+pthread_t *       _workers;    /* worker threads */
+int *             _wids;       /* worker thread ids */
 POINT*  _sums;             /* aggregation of all dimensions */
 int*    _counts;           /* aggregation counter */
 int*    _converged;        /* need shared variable for convergence test */
 int     _numprocs;         /* in case the user provides a processor count */
 int     _go = 0;           /* signal handler: parent->child: "GO!" */
-int     _printres=1;       /* print result option */
+
+
 
 /*
  * Signal handler for go signal from parent
  */
 void siggoproc(int x) {  
-  _info("%d: WORKER GO SIGNAL!\n", getpid());
+  _info("%d: WORKER GO SIGNAL!\n", gettid());
   _go=1;
 }
 
@@ -168,7 +173,7 @@ void kmeans(int id, int nprocs) {
     
     do {
 
-      _info("#%d:%d top-loop\n", id, getpid());
+      _info("#%d:%d top-loop\n", id, gettid());
       reset_accumulators(sums, counts);
       for(i=start; i<stop; i++) {
 	find_nearest_center(_ncenters, &_points[i]);
@@ -183,15 +188,15 @@ void kmeans(int id, int nprocs) {
 	 A better implementation would use atomic instructions and potentially
 	 SIMD instructions to admit more parallelism.
       */      
-      _info("#%d:%d entering _lock wait on %d\n", id, getpid(), _lock);
-      lock(_lock);
-      _info("#%d:%d holds _lock\n", id, getpid());
+      _info("#%d:%d entering _lock wait on %d\n", id, gettid(), _lock);
+      pthread_mutex_lock(&_lock);
+      _info("#%d:%d holds _lock\n", id, gettid());
       for(i=0;i<_k;i++) {
 	accumulate_point(&_sums[i], &sums[i]);
 	_counts[i] += counts[i];
       }
-      _info("#%d:%d releasing _lock\n", id, getpid());
-      unlock(_lock);
+      _info("#%d:%d releasing _lock\n", id, gettid());
+      pthread_mutex_unlock(&_lock);
 
       /* now each thread has completed it's parallel work 
 	 for this iteration ostensibly. The final aggregation and 
@@ -201,18 +206,18 @@ void kmeans(int id, int nprocs) {
 	 use a second barrier wait after the test to ensure that no
 	 process restarts the loop before the test completes.
       */
-      _info("#%d:%d entering barrier wait 1k\n", id, getpid());      
-      barrier_wait_ex(_barrierX, _barrierY, id, nprocs);
-      _info("#%d:%d exiting barrier wait 1k\n", id, getpid());      
+      _info("#%d:%d entering barrier wait 1k\n", id, gettid());      
+      pthread_barrier_wait(&_barrierX);
+      _info("#%d:%d exiting barrier wait 1k\n", id, gettid());      
       if(id==0) {
 	for(i=0; i<_k; i++) 
 	  _ncenters[i] = div_point(&_sums[i], _counts[i]);
 	*_converged = ((!centers_changed(_ncenters)) || itr >= max_itr);
 	reset_accumulators(_sums, _counts);
       }
-      _info("#%d:%d entering barrier wait 2\n", id, getpid());      
-      barrier_wait_ex(_barrierY, _barrierX, id, nprocs);
-      _info("#%d:%d exiting barrier wait 2\n", id, getpid());      
+      _info("#%d:%d entering barrier wait 2\n", id, gettid());      
+      pthread_barrier_wait(&_barrierY);
+      _info("#%d:%d exiting barrier wait 2\n", id, gettid());      
       itr++;
 
     } while(!(*_converged));
@@ -308,119 +313,33 @@ read_inputfile(char *inputname) {
     fclose(inputfile);
 }
 
+void *
+kmeans_thread_proc(void * p) {
+
+  int tid = *((int*)p);  
+  kmeans(tid, _numprocs);
+  return NULL;
+}
 
 unsigned int
 kmeans_workers(int numprocs) {
 
   int i=0;
-  int index=0;
-  int child_status=0;
-  int parent=1;
-  int childpids[MAXWORKERS];
-  int _pfd[MAXWORKERS*2];
-  int * pfd[MAXWORKERS];
-  int _dpfd[MAXWORKERS*2];
-  int * dpfd[MAXWORKERS];
-  cpu_set_t set[MAXWORKERS];
-  int buf = 0;
-  unsigned startticks = 0;
-  unsigned stopticks = 0;
-
-  memset(childpids, 0, MAXWORKERS*sizeof(int));
-  memset(_pfd, 0, MAXWORKERS*sizeof(int)*2);
-  memset(pfd, 0, MAXWORKERS*sizeof(int*));
-  
+  _wids = malloc(sizeof(int)*numprocs);
+  _workers = malloc(sizeof(pthread_t)*numprocs);  
   for(i=0; i<numprocs; i++) {
-    pfd[i] = &_pfd[i*2];
-    dpfd[i] = &_dpfd[i*2];    
-    if(pipe(pfd[i]) < 0 || pipe(dpfd[i]) < 0) {
-      _error("can't make alive/dead pipes %d\n", i);
+    _wids[i] = i;
+    if(pthread_create(&_workers[i], NULL, kmeans_thread_proc, &_wids[i])) {
+      _error("cannot create pthread for worker %d\n", i);
       exit(1);
-    }
+    }    
   }
-  
-  for(index=0; index<numprocs; index++) {
-
-    int child_pid = fork();
-    if(child_pid == 0) {
-
-	close(pfd[index][0]); /* child writes pipe to notify parent alive */
-	close(dpfd[index][0]); /* child writes pipe to notify parent complete */
-
-        /* set cpu affinity for the child */
-	CPU_ZERO(&set[index]);
-	CPU_SET(index, &set[index]);
-	if(sched_setaffinity(getpid(), sizeof(cpu_set_t), &set[index]) == -1) {
-	  _error("#%d:%d set affinity failed\n", index, getpid());
-	  exit(0);
-	}
-
-	/* set up go/stop signals */
-	_go=0;
-	_info("#%d:%d: _go:%d\n", index, getpid(), _go);
-	signal(SIGALRM, siggoproc);     /* override SIGALRM to receive "go" signal from parent */
-	
-	_info("#%d:%d notifying  alive\n", index, getpid());
-	write(pfd[index][1], &buf, 1);  /* hello, parents! I'm alive! */
-	while(!_go);                   /* wait for go signal from parent after all children alive */
-	
-	_info("pid:%d Going! DO SOME WORK HERE\n", getpid());
-	kmeans(index, numprocs);
-
-	_info("#%d:%d done, notifying parent dead!\n", index, getpid());
-	write(dpfd[index][1], &buf, 1); /* notify parent complete! */
-	close(dpfd[index][1]);          /* keep close overheads off parallel critical path */
-	close(pfd[index][1]);           /* keep close overheads off parallel critical path */
-	sleep(1);
-	exit(0);                        /* exit the child process */
-	
-    } else {
-
-      parent=1;
-      close(pfd[index][1]); /* parent reads 'alive signal from child' */
-      close(dpfd[index][1]); /* parent reads 'dead' signal from child' */
-      childpids[index]=child_pid;
-    }
-  }
-    
-  for(index=0; index<numprocs; index++) {
-    int res = 0;
-    do {
-      res = read(pfd[index][0], &buf, 1);
-      _info("collected alive signal (%d) from #%d:%d\n", res, index, childpids[index]);
-      if(res>0) break;
-    } while(res > 0);
-    _info("#%d alive!\n", index);
-  }
-
-  startticks = ticks();
-  for(index=0; index<numprocs; index++) {
-    _info("Telling child#%d (pid%d) to go!\n", index, childpids[index]);
-    kill(childpids[index], SIGALRM);
-  }
-
-  for(index=0; index<numprocs; index++) {
-    
-    /* collect 'done' signal over pipe (rather than wait() to avoid 
-       process creation overheads sneaking into parallel
-       performance measurement 
-    */
-    
-    while(1) {
-      if(read(dpfd[index][0], &buf, 1) > 0)
-	break;
-    } 
-    _info("#%d dead!\n", index);
-  }
-  stopticks = ticks();
-    
-  for(index=0; index<numprocs; index++) {
-    close(pfd[index][0]);    /* close read end of child alive pipe */
-    close(dpfd[index][0]);   /* close read end of child dead pipe */
-    wait(&child_status);     /* wait for process exit--not strictly necessary here */
-    _info("child exited with status %d\n", child_status);
-  }
-  return stopticks - startticks;  
+  for(i=0; i<numprocs; i++)
+    pthread_join(_workers[i], NULL);
+  _info("all threads joined\n");
+  free(_wids);
+  free(_workers);
+  return 0;  
 }
 
 void main (int argc, char *const *argv) {
@@ -430,15 +349,11 @@ void main (int argc, char *const *argv) {
     unsigned ticks = 0;
     _numprocs = get_nprocs_conf();
     
-    while ((opt = getopt(argc, argv, "k:t:i:vc:s")) != -1) {
+    while ((opt = getopt(argc, argv, "k:t:i:vc:")) != -1) {
 	switch (opt) {
 	case 'k':
 	    _k = atoi(optarg);
 	    break;
-	case 's':
-	  // suppress output
-	  _printres = 0;
-	  break;
 	case 'c':
 	  _numprocs = atoi(optarg);
 	  break;
@@ -465,14 +380,14 @@ void main (int argc, char *const *argv) {
     
     read_inputfile(_inputname);
     init_centers(_ncenters);
-    _barrierX = barrier_create(149, _numprocs);
-    _barrierY = barrier_create(150, _numprocs);
-    _lock = lock_create(1449);
+    pthread_barrier_init(&_barrierX, NULL, _numprocs);
+    pthread_barrier_init(&_barrierY, NULL, _numprocs);
+    pthread_mutex_init(&_lock, NULL);
     ticks = kmeans_workers(_numprocs);
-    printf("parallel work completed in %d usec\n", ticks);
+    printf("parallel work completed in %d msec\n", ticks);
 
     /* Print the center of each cluster */
-    if(_verbose || _printres) {
+    if(_verbose) {
       int j,k;
       for (j = 0; j < _k; j++) {
 	printf("Cluster %d center: ", j);
@@ -491,6 +406,9 @@ void main (int argc, char *const *argv) {
     munmap(_sums, _k*sizeof(POINT));
     munmap(_counts, _k*sizeof(int));
     munmap(_converged, sizeof(int));
+    pthread_barrier_destroy(&_barrierX);
+    pthread_barrier_destroy(&_barrierY);
+    pthread_mutex_destroy(&_lock);
     
     exit(EXIT_SUCCESS);
 }
