@@ -12,11 +12,14 @@
 #include <sys/mman.h>
 #include <pthread.h>
 #include <sys/syscall.h>
+#include <limits.h>
 #include "info.h"
 
 #define DIMS 16
 #define MAXWORKERS 32
+#define EPSILON 0.0000001f
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
+#define MAX(a,b) ((a)>(b) ? (a) : (b))
 #define gettid() syscall(__NR_gettid)
 
 typedef struct {    /* A 2D vector */
@@ -25,31 +28,29 @@ typedef struct {    /* A 2D vector */
 } POINT;
 
 
-int     _d = DIMS;         /* dimensionality */
-int     _k = 4;            /* Number of clusters */
-double  _threshold = 0.05; /* Threshold for convergence */
-char*   _inputname;        /* Input filename to read from */
-POINT*  _centers;          /* Global array of centers */
-POINT*  _ncenters;         /* Global temporary centers */
-POINT*  _points;           /* Global array of 2D data points */
-int     _numpoints;        /* Number of 2D data points */
-pthread_barrier_t _barrierS;   /* sync start of all threads */
-pthread_barrier_t _barrierE;   /* sync end of all threads */
-pthread_barrier_t _barrierX;   /* for synchronization of procs across iterations */
-pthread_barrier_t _barrierY;   /* for synchronization of procs across iterations */
-pthread_mutex_t   _lock;       /* sync access to sums arrays at aggregation */
-pthread_t *       _workers;    /* worker threads */
-int *             _wids;       /* worker thread ids */
+int     _d = DIMS;            /* dimensionality */
+int     _k = 4;               /* Number of clusters */
+double  _threshold = EPSILON; /* Threshold for convergence */
+char*   _inputname;           /* Input filename to read from */
+POINT*  _centers;             /* Global array of centers */
+POINT*  _ncenters;            /* Global temporary centers */
+POINT*  _points;              /* Global array of 2D data points */
+int     _numpoints;           /* Number of 2D data points */
+pthread_barrier_t _barrierS;  /* sync start of all threads */
+pthread_barrier_t _barrierE;  /* sync end of all threads */
+pthread_barrier_t _barrierX;  /* for synchronization of procs across iterations */
+pthread_barrier_t _barrierY;  /* for synchronization of procs across iterations */
+pthread_mutex_t   _lock;      /* sync access to sums arrays at aggregation */
+pthread_t *       _workers;   /* worker threads */
+int *             _wids;      /* worker thread ids */
 POINT*  _sums;             /* aggregation of all dimensions */
 int*    _counts;           /* aggregation counter */
 int*    _converged;        /* need shared variable for convergence test */
 int     _numprocs;         /* in case the user provides a processor count */
 int     _go = 0;           /* signal handler: parent->child: "GO!" */
 int     _printres=1;
-unsigned _startticks=0;
-unsigned _stopticks=0;
-int      _startlogged=0;
-int      _stoplogged=0;
+unsigned * _startticks=NULL;
+unsigned * _stopticks=NULL;
 
 /*
  * Signal handler for go signal from parent
@@ -228,7 +229,7 @@ void kmeans(int id, int nprocs) {
     } while(!(*_converged));
 
     if(id==0)
-      _info("Converged in %d iterations (max=%d)\n", itr, max_itr);
+      printf("Converged in %d iterations (max=%d)\n", itr, max_itr);
 }
 
 /*
@@ -271,7 +272,7 @@ read_inputfile(char *inputname) {
 		      MAP_ANONYMOUS|MAP_SHARED,
 		      -1, 0);
     *_converged = 0;
-    
+
     /* Open the input file */
     if (_inputname == NULL) {
 	fprintf(stderr, "Must provide an input filename\n");
@@ -318,31 +319,46 @@ read_inputfile(char *inputname) {
     fclose(inputfile);
 }
 
+int
+set_thread_affinity(int tid) {
+
+  int i;
+  cpu_set_t cpuset;
+  cpu_set_t cpuget;
+  CPU_ZERO(&cpuset);
+  CPU_ZERO(&cpuget);
+  CPU_SET(tid, &cpuset);
+
+  if(pthread_setaffinity_np(_workers[tid], sizeof(cpu_set_t), &cpuset)) {
+      _error("cannot set thread affinity for %d\n", tid);
+      exit(1);
+  }
+  if(pthread_getaffinity_np(_workers[tid], sizeof(cpu_set_t), &cpuget)) {
+      _error("cannot get worker %d\n", tid);
+      exit(1);
+  }
+  for(i=0; i<_numprocs; i++) {
+    if(CPU_ISSET(i, &cpuget)) {
+      _info("#%d:%d affinity set for cpu%d\n", tid, gettid(), i);
+      if(i!=tid) {
+	_error("incorrect affinity: tid:%d -> cpu%d \n", tid, i);
+	exit(1);
+      }
+    }
+  }
+  
+}
+
 void *
 kmeans_thread_proc(void * p) {
 
   int tid = *((int*)p);
-  
+  set_thread_affinity(tid);  
   pthread_barrier_wait(&_barrierS);
-  if(!_startlogged) {
-    pthread_mutex_lock(&_lock);
-    if(!_startlogged) 
-      _startticks = ticks();
-    _startlogged = 1;
-    pthread_mutex_unlock(&_lock);
-  }
-
+  _startticks[tid] = ticks();
   kmeans(tid, _numprocs);
-
-  pthread_barrier_wait(&_barrierE);
-  if(!_stoplogged) {
-    pthread_mutex_lock(&_lock);
-    if(!_stoplogged) 
-      _stopticks = ticks();
-    _stoplogged = 1;
-    pthread_mutex_unlock(&_lock);
-  }
-  
+  _stopticks[tid] = ticks();
+  pthread_barrier_wait(&_barrierE);  
   return NULL;
 }
 
@@ -350,6 +366,9 @@ unsigned int
 kmeans_workers(int numprocs) {
 
   int i=0;
+  unsigned startticks = UINT_MAX;
+  unsigned stopticks = 0;
+  
   _wids = malloc(sizeof(int)*numprocs);
   _workers = malloc(sizeof(pthread_t)*numprocs);  
   for(i=0; i<numprocs; i++) {
@@ -357,14 +376,17 @@ kmeans_workers(int numprocs) {
     if(pthread_create(&_workers[i], NULL, kmeans_thread_proc, &_wids[i])) {
       _error("cannot create pthread for worker %d\n", i);
       exit(1);
-    }    
+    }
   }
-  for(i=0; i<numprocs; i++)
+  for(i=0; i<numprocs; i++) {
     pthread_join(_workers[i], NULL);
+    startticks = MIN(startticks, _startticks[i]);
+    stopticks = MAX(stopticks, _stopticks[i]);
+  }
   _info("all threads joined\n");
   free(_wids);
   free(_workers);
-  return 0;  
+  return stopticks - startticks;  
 }
 
 void main (int argc, char *const *argv) {
@@ -372,6 +394,7 @@ void main (int argc, char *const *argv) {
     size_t len;
     int opt;
     unsigned ticks = 0;
+    
     _numprocs = get_nprocs_conf();
     
     while ((opt = getopt(argc, argv, "k:t:i:vc:")) != -1) {
@@ -405,6 +428,8 @@ void main (int argc, char *const *argv) {
 
     int numprocs = get_nprocs_conf();
     _numprocs = MIN(_numprocs, numprocs);
+    _startticks = malloc(_numprocs*sizeof(unsigned));
+    _stopticks = malloc(_numprocs*sizeof(unsigned));
     
     read_inputfile(_inputname);
     init_centers(_ncenters);
@@ -413,8 +438,7 @@ void main (int argc, char *const *argv) {
     pthread_barrier_init(&_barrierX, NULL, _numprocs);
     pthread_barrier_init(&_barrierY, NULL, _numprocs);
     pthread_mutex_init(&_lock, NULL);
-    kmeans_workers(_numprocs);
-    ticks = _stopticks - _startticks;
+    ticks = kmeans_workers(_numprocs);
     printf("parallel work completed in %d usec\n", ticks);
 
     /* Print the center of each cluster */
@@ -437,6 +461,8 @@ void main (int argc, char *const *argv) {
     munmap(_sums, _k*sizeof(POINT));
     munmap(_counts, _k*sizeof(int));
     munmap(_converged, sizeof(int));
+    free(_startticks);
+    free(_stopticks);
     pthread_barrier_destroy(&_barrierX);
     pthread_barrier_destroy(&_barrierY);
     pthread_mutex_destroy(&_lock);

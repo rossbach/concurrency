@@ -15,6 +15,7 @@
 
 #define DIMS 16
 #define MAXWORKERS 32
+#define EPSILON 0.0000001f
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
 
 typedef struct {    /* A 2D vector */
@@ -25,7 +26,7 @@ typedef struct {    /* A 2D vector */
 
 int     _d = DIMS;         /* dimensionality */
 int     _k = 4;            /* Number of clusters */
-double  _threshold = 0.05; /* Threshold for convergence */
+double  _threshold = EPSILON; /* Threshold for convergence */
 char*   _inputname;        /* Input filename to read from */
 POINT*  _centers;          /* Global array of centers */
 POINT*  _ncenters;         /* Global temporary centers */
@@ -218,7 +219,7 @@ void kmeans(int id, int nprocs) {
     } while(!(*_converged));
 
     if(id==0)
-      _info("Converged in %d iterations (max=%d)\n", itr, max_itr);
+      printf("Converged in %d iterations (max=%d)\n", itr, max_itr);
 }
 
 /*

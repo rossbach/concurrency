@@ -1,7 +1,7 @@
 all: kmeans-pthreads
 
 kmeans-pthreads: kmeans-pthreads.c info.h
-	gcc  kmeans-pthreads.c -lm -o kmeans-pthreads -pthread -g
+	gcc -O3  kmeans-pthreads.c -lm -o kmeans-pthreads -pthread 
 
 clean:
 	rm kmeans-pthreads
