@@ -1,0 +1,156 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E511DD19-F185-BECB-F6AE-7A392912A0F3}</ProjectGuid>
+    <RootNamespace>histogram_vs2010</RootNamespace>
+    <ProjectName>kmeans</ProjectName>
+    <CudaToolkitCustomDir />
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 5.0.props" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
+    <Import Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" />
+  </ImportGroup>
+  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
+    <Import Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>../../bin/win64/$(Configuration)/</OutDir>
+    <IntDir>$(Platform)/$(Configuration)/</IntDir>
+    <IncludePath>$(DXSDK_DIR)\include;$(IncludePath)</IncludePath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>../../bin/win64/$(Configuration)/</OutDir>
+    <IntDir>$(Platform)/$(Configuration)/</IntDir>
+    <IncludePath>$(DXSDK_DIR)\include;$(IncludePath)</IncludePath>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);__STDC__;HAVE_STRING_H</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Console</SubSystem>
+      <AdditionalDependencies>cudart.lib;shrUtils64D.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(CudaToolkitLibDir);../common/lib/$(PlatformName);../shared/lib/$(PlatformName)</AdditionalLibraryDirectories>
+      <OutputFile>$(OutDir)/kmeans.exe</OutputFile>
+      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+    </Link>
+    <PostBuildEvent>
+      <Command>
+      </Command>
+    </PostBuildEvent>
+    <CudaCompile>
+      <CodeGeneration>compute_20,sm_20;compute_30,sm_30;compute_35,sm_35</CodeGeneration>
+      <Include>./;../common/inc;../shared/inc</Include>
+      <Defines>
+      </Defines>
+      <TargetMachinePlatform>64</TargetMachinePlatform>
+      <Runtime>MTd</Runtime>
+    </CudaCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);__STDC__;HAVE_STRING_H</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <SubSystem>Console</SubSystem>
+      <AdditionalDependencies>cudart.lib;shrUtils64.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(CudaToolkitLibDir);../common/lib/$(PlatformName);../shared/lib/$(PlatformName)</AdditionalLibraryDirectories>
+      <OutputFile>$(OutDir)/kmeans.exe</OutputFile>
+    </Link>
+    <PostBuildEvent>
+      <Command>
+      </Command>
+    </PostBuildEvent>
+    <CudaCompile>
+      <TargetMachinePlatform>64</TargetMachinePlatform>
+      <Runtime>MT</Runtime>
+      <CodeGeneration>compute_20,sm_20;compute_30,sm_30;compute_35,sm_35</CodeGeneration>
+    </CudaCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CudaCompile Include="kmeans.cu">
+      <Include Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">./;../common/inc</Include>
+      <Include Condition="'$(Configuration)|$(Platform)'=='Release|x64'">./;../common/inc</Include>
+      <CodeGeneration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">compute_20,sm_20;compute_30,sm_30</CodeGeneration>
+    </CudaCompile>
+    <CudaCompile Include="kmeanscm.cu">
+      <Include Condition="'$(Configuration)|$(Platform)'=='Release|x64'">./;../common/inc</Include>
+    </CudaCompile>
+    <CudaCompile Include="kmeansraw.cu">
+      <Include Condition="'$(Configuration)|$(Platform)'=='Release|x64'">./;../common/inc;../shared/inc</Include>
+    </CudaCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="genericvector.h" />
+    <ClInclude Include="getopt.h" />
+    <ClInclude Include="hrperftimer.h" />
+    <ClInclude Include="kmeans-common.cu.h" />
+    <ClInclude Include="kmeans.cu.h" />
+    <ClInclude Include="kmeanscm.cu.h" />
+    <ClInclude Include="kmeansraw.cu.h" />
+    <ClInclude Include="rawvector.h" />
+    <ClInclude Include="testsuitedecl.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="getopt.cpp">
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">_MBCS;%(PreprocessorDefinitions);HAVE_STRING_H</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(CudaToolkitIncludeDir);./;../common/inc;../shared/inc</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(CudaToolkitIncludeDir);./;../common/inc;../shared/inc</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\common\cutil_vs2010.vcxproj">
+      <Project>{46fb0b73-5a53-444a-8e72-f4f0a373098c}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\shared\shrUtils_vs2010.vcxproj">
+      <Project>{f9750d72-d315-4f81-af1b-10938220ffb3}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="compiling.txt" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 5.0.targets" />
+  </ImportGroup>
+</Project>
